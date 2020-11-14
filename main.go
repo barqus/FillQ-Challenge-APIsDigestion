@@ -159,8 +159,11 @@ func main() {
 
 //HandleRequest serves data to lambda
 func HandleRequest(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	resp := events.APIGatewayProxyResponse{Headers: make(map[string]string)}
+	resp.Headers["Access-Control-Allow-Origin"] = "*"
+
 	if request.HTTPMethod == "GET" {
-		APIResponse := events.APIGatewayProxyResponse{Body: ResponseBody, StatusCode: 200}
+		APIResponse := events.APIGatewayProxyResponse{Body: ResponseBody, StatusCode: 200, Headers: resp.Headers}
 		return APIResponse, nil
 	} else {
 		err := errors.New("method not allowed")
