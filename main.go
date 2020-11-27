@@ -1,4 +1,5 @@
 //Lambda Function Go Code
+// http://ddragon.leagueoflegends.com/cdn/6.3.1/img/profileicon/profileIconId.png
 package main
 
 import (
@@ -12,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-lambda-go/lambda"
 )
 
 const summonerInformation = "https://euw1.api.riotgames.com/lol/summoner/v4/summoners/by-name/"
@@ -30,12 +30,14 @@ var twitchOAUTH = os.Getenv("twitchOAUTH")
 const twitchChannelURL = "https://api.twitch.tv/helix/search/channels"
 
 type Participant struct {
+	ParticipantName   string
 	LolSummonerName   string
 	TwitchChannelName string
 }
 
 type League struct {
 	LeagueID     string `json:"leagueId"`
+	SummonerIcon float64
 	QueueType    string `json:"queueType"`
 	Tier         string `json:"tier"`
 	Rank         string `json:"rank"`
@@ -85,12 +87,14 @@ type ChannelsGathered struct {
 }
 
 type LambdaOutput struct {
-	SummonerName string `json:"summonerName"`
-	Tier         string `json:"tier"`
-	Rank         string `json:"rank"`
-	LeaguePoints int    `json:"leaguePoints"`
-	Wins         int    `json:"wins"`
-	Losses       int    `json:"losses"`
+	Participant  string  `json:"Participant"`
+	SummonerName string  `json:"summonerName"`
+	SummonerIcon float64 `json:"summonerIcon"`
+	Tier         string  `json:"tier"`
+	Rank         string  `json:"rank"`
+	LeaguePoints int     `json:"leaguePoints"`
+	Wins         int     `json:"wins"`
+	Losses       int     `json:"losses"`
 	MiniSeries   struct {
 		Target   int    `json:"target"`
 		Wins     int    `json:"wins"`
@@ -104,57 +108,36 @@ type LambdaOutput struct {
 	Title        string `json:"title"`
 }
 
-type LambdaOutputs []LambdaOutput
-
 var wg sync.WaitGroup
 
 //ResponseBody for output to lambda
 var ResponseBody string
 
 func main() {
+	var LambdaOutputs []LambdaOutput
 
-	// currentTime := time.Now()
-	// if currentTime.Day() == 15 {
-	// 	accessToken := getTwitchAuthToken()
-	// 	fmt.Println(currentTime)
-	// }
-
-	// accessToken := getTwitchAuthToken()
-	fmt.Println(riotToken, twitchClientID, twitchClientSecret, twitchOAUTH)
 	participants := []Participant{
-		Participant{"Choseris", "ChosenOneLol"},
-		Participant{"KNOK1", "knok1zygis"},
+		Participant{"Optimas", "OptimasLinijas", "optimaslol"},
+		Participant{"ChosenOne", "ChosenOne Filler", "chosenonelol"},
+		Participant{"Real", "wo mei yali", "realzyyy_"},
+		Participant{"KNOK1", "YouCantKillMe", "knok1zygis"},
+		Participant{"Saulius", "MarkRank1", "sauliuslol"},
+		Participant{"Sponsorius", "S11 was So Fun", "sponsorius"},
+		Participant{"Dethron", "sergu", "dethronlol"},
+		Participant{"Yashiro", "DonOuei38", "yaashiro"},
 	}
-	summonerThreadChannel := make(chan League, len(participants))
-	twitchThreadChannel := make(chan ChannelInformation, len(participants))
-	outputThreadChannel := make(chan LambdaOutput, len(participants))
+
 	for _, element := range participants {
-		wg.Add(3)
-		go getSummonerData(summonerThreadChannel, element.LolSummonerName)
-		go getTwitchChannelInformation(twitchThreadChannel, element.TwitchChannelName, twitchOAUTH)
-		out1 := <-summonerThreadChannel
-		out2 := <-twitchThreadChannel
-		go convertToOutputJSON(outputThreadChannel, out2, out1)
-		// break
-	}
+		out1 := getTwitchChannelInformation(element.TwitchChannelName, twitchOAUTH)
+		out2 := getSummonerData(element.LolSummonerName)
 
-	wg.Wait()
-	close(summonerThreadChannel)
-	close(twitchThreadChannel)
-	close(outputThreadChannel)
-
-	var OutputArray LambdaOutputs
-	for element := range outputThreadChannel {
-		OutputArray = append(OutputArray, element)
+		out3 := convertToOutputJSON(out1, out2, element.ParticipantName)
+		LambdaOutputs = append(LambdaOutputs, out3)
 	}
-	e, err := json.Marshal(OutputArray)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+	e, _ := json.Marshal(LambdaOutputs)
 	ResponseBody = string(e)
 	fmt.Println(ResponseBody)
-	lambda.Start(HandleRequest)
+	// lambda.Start(HandleRequest)
 }
 
 //HandleRequest serves data to lambda
@@ -172,8 +155,7 @@ func HandleRequest(request events.APIGatewayProxyRequest) (events.APIGatewayProx
 	}
 }
 
-func getSummonerData(c chan League, summonerName string) {
-	defer wg.Done()
+func getSummonerData(summonerName string) League {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", summonerInformation+summonerName, nil)
 	if err != nil {
@@ -190,51 +172,33 @@ func getSummonerData(c chan League, summonerName string) {
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	json.Unmarshal(bodyBytes, &data)
 	summonerID, _ := data["id"].(string)
+	summonerIcon, _ := data["profileIconId"].(float64)
 
 	req, err = http.NewRequest("GET", summonerLeagueInformation+summonerID, nil)
 	req.Header.Set("X-Riot-Token", riotToken)
 	resp, err = client.Do(req)
 	defer resp.Body.Close()
 	bodyBytes, _ = ioutil.ReadAll(resp.Body)
-
 	var allLeagues [2]League
-
+	var toReturn League
 	json.Unmarshal(bodyBytes, &allLeagues)
-	for _, element := range allLeagues {
-		if element.QueueType == "RANKED_SOLO_5x5" {
-			rankedInformation := element
-			c <- rankedInformation
-		}
+	s := string(bodyBytes)
+	if s == "[]" {
+		toReturn.SummonerIcon = summonerIcon
+		toReturn.SummonerName = summonerName
 	}
 
+	for _, element := range allLeagues {
+		if element.QueueType == "RANKED_SOLO_5x5" {
+			element.SummonerIcon = summonerIcon
+			toReturn = element
+			break
+		}
+	}
+	return toReturn
 }
 
-// func getTwitchAuthToken() (token string) {
-// 	client := &http.Client{}
-// 	req, err := http.NewRequest("POST", twitchAuth, nil)
-// 	if err != nil {
-// 		// return nil
-// 	}
-// 	q := req.URL.Query()
-// 	q.Add("client_id", twitchClientID)
-// 	q.Add("client_secret", twitchClientSecret)
-// 	q.Add("grant_type", "client_credentials")
-// 	req.URL.RawQuery = q.Encode()
-// 	resp, err := client.Do(req)
-// 	if err != nil {
-// 		// return nil
-// 	}
-
-// 	data := make(map[string]interface{})
-// 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
-// 	json.Unmarshal(bodyBytes, &data)
-// 	accessToken, _ := data["access_token"].(string)
-// 	return accessToken
-// }
-
-func getTwitchChannelInformation(c chan ChannelInformation, twitchChannelName string, accessToken string) {
-	defer wg.Done()
-	// ?query=Sponsorius
+func getTwitchChannelInformation(twitchChannelName string, accessToken string) ChannelInformation {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", twitchChannelURL, nil)
 	if err != nil {
@@ -253,19 +217,22 @@ func getTwitchChannelInformation(c chan ChannelInformation, twitchChannelName st
 
 	// Convert response body to Summoner struct
 	var allChannelGathered ChannelsGathered
-
+	var toReturn ChannelInformation
 	json.Unmarshal(bodyBytes, &allChannelGathered)
 	for _, element := range allChannelGathered.Data {
 		if strings.EqualFold(element.DisplayName, twitchChannelName) {
-			c <- element
+			toReturn = element
 		}
 	}
+
+	return toReturn
 }
 
-func convertToOutputJSON(c chan LambdaOutput, channelInformation ChannelInformation, summonerLeague League) {
-	defer wg.Done()
+func convertToOutputJSON(channelInformation ChannelInformation, summonerLeague League, ParticipantName string) LambdaOutput {
 	lambdaOutput := LambdaOutput{
+		Participant:  ParticipantName,
 		SummonerName: summonerLeague.SummonerName,
+		SummonerIcon: summonerLeague.SummonerIcon,
 		Tier:         summonerLeague.Tier,
 		Rank:         summonerLeague.Rank,
 		LeaguePoints: summonerLeague.LeaguePoints,
@@ -278,5 +245,5 @@ func convertToOutputJSON(c chan LambdaOutput, channelInformation ChannelInformat
 		ThumbnailURL: channelInformation.ThumbnailURL,
 		Title:        channelInformation.Title,
 	}
-	c <- lambdaOutput
+	return lambdaOutput
 }
